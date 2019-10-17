@@ -8,33 +8,30 @@ import (
 )
 
 const (
-	TcpMsgSizeLen        = 4
-	TcpMaxMsgSize        = math.MaxUint32 - TcpMsgSizeLen
-	TcpDefaultMaxMsgSize = 65536
+	TCPMsgSizeLen        = 4
+	TCPMaxMsgSize        = math.MaxUint32 - TCPMsgSizeLen
+	TCPDefaultMaxMsgSize = 65536
 )
 
-type TcpSession struct {
+type TCPSession struct {
 	session
 }
 
-func newTcpSession(conn net.Conn) *TcpSession {
-	if _, ok := conn.(*net.TCPConn); !ok {
-		panic(errConnType)
-	}
-	s := &TcpSession{}
+func newTcpSession(conn *net.TCPConn) *TCPSession {
+	s := &TCPSession{}
 	s.session = newSession(s, conn)
-	s.maxMsgSize = TcpDefaultMaxMsgSize
+	s.maxMsgSize = TCPDefaultMaxMsgSize
 	return s
 }
 
-func (tcp *TcpSession) SetMaxMsgSize(size int) error {
-	if size <= 0 || size > TcpMaxMsgSize {
+func (tcp *TCPSession) SetMaxMessage(size int) error {
+	if size <= 0 || size > TCPMaxMsgSize {
 		return ErrMaxMsgSize
 	}
-	return tcp.session.SetMaxMsgSize(size)
+	return tcp.session.SetMaxMessage(size)
 }
 
-func (tcp *TcpSession) sendThread() {
+func (tcp *TCPSession) sendThread() {
 	var (
 		sendBuffer = io.NewBinaryBuffer(tcp.sendBuffSize)
 		writeSize  = false
@@ -70,7 +67,7 @@ func (tcp *TcpSession) sendThread() {
 
 			/* 写消息大小 */
 			if !writeSize {
-				if sendBuffer.Available() < TcpMsgSizeLen {
+				if sendBuffer.Available() < TCPMsgSizeLen {
 					break
 				}
 				sendBuffer.WriteUint32(uint32(length))
@@ -105,7 +102,7 @@ func (tcp *TcpSession) sendThread() {
 	}
 }
 
-func (tcp *TcpSession) receiveThread() {
+func (tcp *TCPSession) receiveThread() {
 	var (
 		receiveBuffer = io.NewBinaryBuffer(tcp.receiveBuffSize)
 		msgBytes      []byte
@@ -128,7 +125,7 @@ func (tcp *TcpSession) receiveThread() {
 
 		for receiveBuffer.Buffered() > 0 {
 			if msgSize < 0 {
-				if receiveBuffer.Buffered() < TcpMsgSizeLen {
+				if receiveBuffer.Buffered() < TCPMsgSizeLen {
 					break
 				}
 				size, _ := receiveBuffer.ReadUint32()
@@ -169,4 +166,70 @@ func (tcp *TcpSession) receiveThread() {
 			msgRead = 0
 		}
 	}
+}
+
+type TCPListener struct {
+	l *net.TCPListener
+}
+
+func (l *TCPListener) Accept() (s Session, e error) {
+	return l.AcceptTCP()
+}
+
+func (l *TCPListener) AcceptTCP() (s *TCPSession, e error) {
+	if conn, err := l.l.AcceptTCP(); err == nil {
+		s, e = newTcpSession(conn), nil
+	} else {
+		e = err
+	}
+
+	return
+}
+
+func (l *TCPListener) Close() error {
+	return l.Close()
+}
+
+func (l *TCPListener) Network() string {
+	return l.l.Addr().Network()
+}
+
+func (l *TCPListener) Addr() string {
+	return l.l.Addr().String()
+}
+
+func ListenTCP(network, addr string) (*TCPListener, error) {
+	switch network {
+	case "tcp", "tcp4", "tcp6":
+		if addr, err := net.ResolveTCPAddr(network, addr); err != nil {
+			return nil, err
+		} else if l, err := net.ListenTCP(network, addr); err != nil {
+			return nil, err
+		} else {
+			return &TCPListener{l: l}, nil
+		}
+
+	default:
+		return nil, ErrUnknownNetwork
+	}
+}
+
+func ConnectTCP(network, addr string) (*TCPSession, error) {
+	return ConnectTCPTimeout(network, addr, 0)
+}
+
+func ConnectTCPTimeout(network, addr string, timeout time.Duration) (s *TCPSession, e error) {
+	switch network {
+	case "tcp", "tcp4", "tcp6":
+		if conn, err := net.DialTimeout(network, addr, timeout); err == nil {
+			s = newTcpSession(conn.(*net.TCPConn))
+		} else {
+			e = err
+		}
+
+	default:
+		e = ErrUnknownNetwork
+	}
+
+	return
 }

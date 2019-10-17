@@ -33,7 +33,7 @@ func Test(t *testing.T) {
 	var (
 		network    = "tcp4"
 		addr       = "127.0.0.1:10000"
-		listener   *Listener
+		listener   Listener
 		cliSession Session
 		srvSession Session
 		err        error
@@ -46,7 +46,7 @@ func Test(t *testing.T) {
 
 	// 启动listener
 	fmt.Println("start tcp listener")
-	if listener, err = Listen(network, addr); err != nil {
+	if listener, err = ListenTCP(network, addr); err != nil {
 		fmt.Printf("create listener failed, %s\n", err)
 		return
 	}
@@ -93,7 +93,7 @@ func Test(t *testing.T) {
 
 	// 连接server
 	fmt.Println("connect tcp server")
-	if cliSession, err = Connect(network, addr); err != nil {
+	if cliSession, err = ConnectTCP(network, addr); err != nil {
 		fmt.Printf("connect server failed, %s\n", err)
 		return
 	}
@@ -139,7 +139,7 @@ func TestMaxMsg(t *testing.T) {
 	var (
 		network    = "tcp4"
 		addr       = "127.0.0.1:10000"
-		listener   *Listener
+		listener   Listener
 		cliSession Session
 		srvSession Session
 		err        error
@@ -154,16 +154,16 @@ func TestMaxMsg(t *testing.T) {
 
 	// 启动listener
 	fmt.Println("start tcp listener")
-	if listener, err = Listen(network, addr); err != nil {
+	if listener, err = ListenTCP(network, addr); err != nil {
 		fmt.Printf("create listener failed, %s\n", err)
 		return
 	}
 	go func() {
 		if srvSession, err = listener.Accept(); err == nil {
 			srvSession.SetCodecs(&tcpCodecs{})
-			srvSession.SetSendBuffSize(8192)
-			srvSession.SetReceiveBuffSize(8192)
-			srvSession.SetMaxMsgSize(maxMsgSize)
+			srvSession.SetSendBuffer(8192)
+			srvSession.SetReceiveBuffer(8192)
+			srvSession.SetMaxMessage(maxMsgSize)
 
 			// 启动session
 			srvSession.Start(func(s *session, evt SessionEvt) {
@@ -202,15 +202,15 @@ func TestMaxMsg(t *testing.T) {
 
 	// 连接server
 	fmt.Println("connect tcp server")
-	if cliSession, err = Connect(network, addr); err != nil {
+	if cliSession, err = ConnectTCP(network, addr); err != nil {
 		fmt.Printf("connect server failed, %s\n", err)
 		return
 	}
 	// 启动client
 	cliSession.SetCodecs(&tcpCodecs{})
-	cliSession.SetSendBuffSize(8192)
-	cliSession.SetReceiveBuffSize(8192)
-	cliSession.SetMaxMsgSize(maxMsgSize)
+	cliSession.SetSendBuffer(8192)
+	cliSession.SetReceiveBuffer(8192)
+	cliSession.SetMaxMessage(maxMsgSize)
 	cliSession.Start(func(s *session, evt SessionEvt) {
 		switch evt.Type() {
 		case SessionEvtSendErr:

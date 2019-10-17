@@ -18,8 +18,6 @@ var (
 	ErrSendChanSize      = errors.New("send channel size error")
 	ErrNilMsg            = errors.New("nil msg")
 	ErrMsgTooLarge       = errors.New("msg too large")
-
-	errConnType = errors.New("conn type error")
 )
 
 const (
@@ -50,16 +48,16 @@ type Session interface {
 	SetReceiveTimeout(time.Duration) error
 
 	// 设置发送缓冲区大小
-	SetSendBuffSize(int) error
+	SetSendBuffer(size int) error
 
 	// 设置接收缓冲区大小
-	SetReceiveBuffSize(int) error
+	SetReceiveBuffer(size int) error
 
 	// 设置最大消息大小
-	SetMaxMsgSize(int) error
+	SetMaxMessage(size int) error
 
 	// 设置发送channel大小
-	SetSendChanSize(int) error
+	SetSendChan(size int) error
 
 	// 发送消息
 	Send(msg interface{}) error
@@ -191,7 +189,7 @@ func (s *session) SetReceiveTimeout(t time.Duration) error {
 	return nil
 }
 
-func (s *session) SetSendBuffSize(size int) error {
+func (s *session) SetSendBuffer(size int) error {
 	if size <= 0 {
 		return ErrBuffSize
 	}
@@ -210,7 +208,7 @@ func (s *session) SetSendBuffSize(size int) error {
 	return nil
 }
 
-func (s *session) SetReceiveBuffSize(size int) error {
+func (s *session) SetReceiveBuffer(size int) error {
 	if size <= 0 {
 		return ErrBuffSize
 	}
@@ -229,7 +227,7 @@ func (s *session) SetReceiveBuffSize(size int) error {
 	return nil
 }
 
-func (s *session) SetMaxMsgSize(size int) error {
+func (s *session) SetMaxMessage(size int) error {
 	if size <= 0 {
 		return ErrMaxMsgSize
 	}
@@ -248,7 +246,7 @@ func (s *session) SetMaxMsgSize(size int) error {
 	return nil
 }
 
-func (s *session) SetSendChanSize(size int) error {
+func (s *session) SetSendChan(size int) error {
 	if size <= 0 {
 		return ErrSendChanSize
 	}
