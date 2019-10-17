@@ -1,7 +1,7 @@
 package socket
 
 import (
-	"go/net/io"
+	"github.com/Godyy/go-net/io"
 	"math"
 	"net"
 	"time"
