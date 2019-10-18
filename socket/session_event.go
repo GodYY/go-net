@@ -23,6 +23,11 @@ type SessionSendErrEvt struct {
 	Err error
 }
 
+type SessionEvent struct {
+	Msg interface{}
+	Err error
+}
+
 func newSessionSendErrEvt(msg interface{}, err error) *SessionSendErrEvt {
 	return &SessionSendErrEvt{Msg: msg, Err: err}
 }

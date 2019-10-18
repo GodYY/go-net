@@ -24,7 +24,7 @@ type Listener interface {
 // Codecs is a generic coder-decoder for all type of socket-session.
 type Codecs interface {
 	// Code the message giving.
-	Encode(o interface{}) (Packet, error)
+	Encode(o interface{}) (Message, error)
 
 	// Decode try to decode the byte slice giving to a message object.
 	Decode(bytes []byte) (interface{}, error)

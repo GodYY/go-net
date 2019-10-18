@@ -85,7 +85,7 @@ type session struct {
 	sendBuffSize    int                  // 发送缓冲区大小
 	receiveBuffSize int                  // 接收缓冲区大小
 	maxMsgSize      int                  // 最大消息大小
-	sendChan        chan Packet          // 发送channel
+	sendChan        chan Message         // 发送channel
 	evtCB           SessionEventCallback // 事件回调
 }
 
@@ -114,7 +114,7 @@ func (s *session) Start(evtCB SessionEventCallback) error {
 	}
 
 	if s.sendChan == nil {
-		s.sendChan = make(chan Packet, defaultSendChanSize)
+		s.sendChan = make(chan Message, defaultSendChanSize)
 	}
 
 	s.evtCB = evtCB
@@ -261,7 +261,7 @@ func (s *session) SetSendChan(size int) error {
 		return ErrSessionClosed
 	}
 
-	s.sendChan = make(chan Packet, size)
+	s.sendChan = make(chan Message, size)
 	return nil
 }
 

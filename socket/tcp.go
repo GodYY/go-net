@@ -35,7 +35,7 @@ func (tcp *TCPSession) sendThread() {
 	var (
 		sendBuffer = io.NewBinaryBuffer(tcp.sendBuffSize)
 		writeSize  = false
-		packet     Packet
+		msg        Message
 		length     int
 		wrote      int
 	)
@@ -43,24 +43,24 @@ func (tcp *TCPSession) sendThread() {
 	for !tcp.isClosed(true) {
 		first := true
 		for sendBuffer.Available() > 0 {
-			if packet == nil {
+			if msg == nil {
 				if first {
-					packet = <-tcp.sendChan
-					if packet == nil {
+					msg = <-tcp.sendChan
+					if msg == nil {
 						return
 					}
 				} else {
 					select {
-					case packet = <-tcp.sendChan:
+					case msg = <-tcp.sendChan:
 					default:
 					}
 				}
 
-				if packet == nil {
+				if msg == nil {
 					break
 				}
 
-				length = packet.Length()
+				length = msg.Length()
 			}
 
 			first = false
@@ -75,12 +75,12 @@ func (tcp *TCPSession) sendThread() {
 			}
 
 			/* 写消息 */
-			n, _ := sendBuffer.Write(packet.Data()[wrote:length])
+			n, _ := sendBuffer.Write(msg.Data()[wrote:length])
 			wrote += n
 			if wrote == length {
 				writeSize = false
-				packet.Release()
-				packet = nil
+				msg.Release()
+				msg = nil
 				length = 0
 				wrote = 0
 			}

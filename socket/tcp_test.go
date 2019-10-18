@@ -15,7 +15,7 @@ type stringMsg struct {
 type tcpCodecs struct {
 }
 
-func (c *tcpCodecs) Encode(o interface{}) (Packet, error) {
+func (c *tcpCodecs) Encode(o interface{}) (Message, error) {
 	switch msg := o.(type) {
 	case *stringMsg:
 		return NewPacket(msg.msg), nil
