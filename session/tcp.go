@@ -1,4 +1,4 @@
-package socket
+package session
 
 import (
 	"github.com/Godyy/go-net/io"
@@ -31,6 +31,8 @@ func (tcp *TCPSession) SetMaxMessage(size int) error {
 	return tcp.session.SetMaxMessage(size)
 }
 
+func (tcp *TCPSession) tcpConn() *net.TCPConn { return tcp.session.conn.(*net.TCPConn) }
+
 func (tcp *TCPSession) sendThread() {
 	var (
 		sendBuffer = io.NewBinaryBuffer(tcp.sendBuffSize)
@@ -41,29 +43,19 @@ func (tcp *TCPSession) sendThread() {
 	)
 
 	for !tcp.isClosed(true) {
-		first := true
+		waitPop := true
 		for sendBuffer.Available() > 0 {
 			if msg == nil {
-				if first {
-					msg = <-tcp.sendChan
-					if msg == nil {
-						return
-					}
-				} else {
-					select {
-					case msg = <-tcp.sendChan:
-					default:
-					}
-				}
-
-				if msg == nil {
+				var o = tcp.sendQueue.Pop(waitPop)
+				if o == nil {
 					break
 				}
 
+				msg = o.(Message)
 				length = msg.Length()
 			}
 
-			first = false
+			waitPop = false
 
 			/* 写消息大小 */
 			if !writeSize {
@@ -91,11 +83,30 @@ func (tcp *TCPSession) sendThread() {
 			if tcp.sendTimeout > 0 {
 				tcp.conn.SetWriteDeadline(time.Now().Add(tcp.sendTimeout))
 			}
-			_, err := sendBuffer.WriteTo(tcp.conn)
-			if err != nil {
-				/* 发送错误 */
-				tcp.tryClose(err)
-				return
+
+			if _, err := sendBuffer.WriteTo(tcp.conn); err != nil {
+				// if session had benn closed, directly return.
+				if tcp.isClosed(true) {
+					return
+				}
+
+				if isConnRST(err) {
+					// close session.
+					tcp.Close()
+
+					evt := newEventClose(close_ConnReset)
+					tcp.notifyEvent(evt)
+					return
+				} else {
+					evt := newEventError(newError(ErrorType_SendMessage, err))
+					tcp.notifyEvent(evt)
+
+					if isTimeout(err) {
+						continue
+					} else {
+						time.Sleep(100 * time.Millisecond)
+					}
+				}
 			}
 		}
 		sendBuffer.Trim()
@@ -108,19 +119,60 @@ func (tcp *TCPSession) receiveThread() {
 		msgBytes      []byte
 		msgSize       = int(-1)
 		msgRead       int
+		discard       bool
 	)
 
 	for !tcp.isClosed(true) {
-		/* 接收字节流数据 */
 		receiveBuffer.Trim()
+
+		/* 接收字节流数据 */
 		if tcp.receiveTimeout > 0 {
 			tcp.conn.SetReadDeadline(time.Now().Add(tcp.receiveTimeout))
 		}
-		_, err := receiveBuffer.ReadFrom(tcp.conn)
-		if err != nil {
-			/* 接收错误 */
-			tcp.tryClose(err)
-			return
+
+		// receive network data.
+		if n, err := receiveBuffer.ReadFrom(tcp.conn); n == 0 || err != nil {
+			// if session had benn closed, directly return.
+			if tcp.isClosed(true) {
+				return
+			}
+
+			switch {
+			case n == 0 || isEOF(err):
+				// remote close session, local close too.
+				tcp.Close()
+				evt := newEventClose(close_RemoteClose)
+				tcp.notifyEvent(evt)
+				return
+
+			case isConnRST(err):
+				// connection reset by remote.
+				tcp.Close()
+				evt := newEventClose(close_ConnReset)
+				tcp.notifyEvent(evt)
+				return
+
+			default:
+				evt := newEventError(newError(ErrorType_ReceiveMessage, err))
+				tcp.notifyEvent(evt)
+
+				if isTimeout(err) {
+					// read timeout, directly retry.
+					continue
+				} else {
+					// other error, sleep a few time.
+					time.Sleep(100 * time.Millisecond)
+				}
+			}
+		} else if discard {
+			// receive a size-exceed message before, discard it's data.
+			discarded, _ := receiveBuffer.Discard(msgSize)
+			msgSize -= discarded
+			if msgSize > 0 {
+				continue
+			}
+			msgSize = -1
+			discard = false
 		}
 
 		for receiveBuffer.Buffered() > 0 {
@@ -128,40 +180,61 @@ func (tcp *TCPSession) receiveThread() {
 				if receiveBuffer.Buffered() < TCPMsgSizeLen {
 					break
 				}
+
 				size, _ := receiveBuffer.ReadUint32()
 				msgSize = int(size)
 				if msgSize > tcp.maxMsgSize {
-					// 消息大小超过限制
-					tcp.tryClose(ErrMsgTooLarge)
-					return
-				}
-			}
+					// receive a size-exceed message, notify event and discard it's data.
 
-			if msgBytes == nil {
-				if receiveBuffer.Buffered() < msgSize {
-					if receiveBuffer.Buffered() < receiveBuffer.Size() {
+					evt := newEventError(newError(ErrorType_ReceiveMessage, ErrMsgTooLarge))
+					tcp.notifyEvent(evt)
+
+					discarded, _ := receiveBuffer.Discard(msgSize)
+					msgSize -= discarded
+					if msgSize <= 0 {
+						msgSize = -1
+						continue
+					} else {
+						discard = true
 						break
 					}
+				}
 
+				if msgSize > receiveBuffer.Size() {
+					// message size exceed receive buffer size, so manual alloc a data buffer.
 					msgBytes = make([]byte, msgSize)
-				} else {
-					msgBytes, _ = receiveBuffer.Peek(msgSize)
-					receiveBuffer.Discard(msgSize)
-					msgRead = msgSize
 				}
 			}
 
-			if msgRead < msgSize {
+			// extract message data.
+			if msgBytes != nil {
+				// read message data from receive buffer.
 				n, _ := receiveBuffer.Read(msgBytes[msgRead:])
 				msgRead += n
-				if msgRead < msgSize {
-					break
-				}
+			} else if receiveBuffer.Buffered() >= msgSize {
+				// directly reference bytes of the message of receive buffer.
+				msgBytes, _ = receiveBuffer.Peek(msgSize)
+				receiveBuffer.Discard(msgSize)
+				msgRead = msgSize
+			}
+			if msgRead < msgSize {
+				// partial extract, continue receive data.
+				break
 			}
 
-			msg, err := tcp.codecs.Decode(msgBytes)
-			tcp.notifyEvent(newSessionReceiveEvt(msg, err))
-			msgBytes = nil
+			// decode message.
+			if msg, err := tcp.codecs.Decode(msgBytes); err != nil {
+				// error occur while decoding message.
+				tcp.notifyEvent(newEventError(newError(ErrorType_ReceiveMessage, err)))
+			} else {
+				// message decoded successfully, notify message up.
+				tcp.notifyEvent(newEventMessage(msg))
+			}
+
+			if msgBytes != nil {
+				// release manual-alloc message data buffer.
+				msgBytes = nil
+			}
 			msgSize = -1
 			msgRead = 0
 		}

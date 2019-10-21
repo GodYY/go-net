@@ -1,10 +1,10 @@
-package socket
+package session
 
 import (
 	"errors"
 )
 
-// Message is a capsulation for every single message sent by user.
+// Message is a capsulation for every single message coded sent by user.
 type Message interface {
 	// The data that user message be coded to.
 	Data() []byte
@@ -20,7 +20,7 @@ type message struct {
 	data []byte
 }
 
-func NewPacket(data []byte) *message {
+func NewMessage(data []byte) *message {
 	if data == nil {
 		panic(errors.New("nil data"))
 	}

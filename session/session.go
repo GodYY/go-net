@@ -1,39 +1,26 @@
-package socket
+package session
 
 import (
-	"errors"
+	"github.com/Godyy/go-net/container/queue"
 	"net"
 	"sync"
 	"time"
 )
 
-var (
-	ErrNilEventCallback  = errors.New("nil event callback")
-	ErrSessionNotStarted = errors.New("session not started")
-	ErrSessionStarted    = errors.New("session started")
-	ErrSessionClosed     = errors.New("session closed")
-	ErrNilCodecs         = errors.New("nil codecs")
-	ErrBuffSize          = errors.New("buffer size error")
-	ErrMaxMsgSize        = errors.New("max message size error")
-	ErrSendChanSize      = errors.New("send channel size error")
-	ErrNilMsg            = errors.New("nil msg")
-	ErrMsgTooLarge       = errors.New("msg too large")
-)
-
 const (
-	defaultSendChanSize    = 10
-	defaultSendBuffSize    = 8192
-	defaultReceiveBuffSize = 8192
+	DefaultSendQueueSize   = 10
+	DefaultSendBuffSize    = 8192
+	DefaultReceiveBuffSize = 8192
 )
 
 // 会话事件回调
-type SessionEventCallback func(*session, SessionEvt)
+type EventCallback func(*session, Event)
 
 // 套接字会话接口
 // 定义套接字网络会话的基本功能
 type Session interface {
 	// 启动会话
-	Start(SessionEventCallback) error
+	Start(EventCallback) error
 
 	// 关闭会话
 	Close() error
@@ -56,8 +43,11 @@ type Session interface {
 	// 设置最大消息大小
 	SetMaxMessage(size int) error
 
-	// 设置发送channel大小
-	SetSendChan(size int) error
+	// 设置发送队列大小
+	SetSendQueue(size int) error
+
+	// 设置选项
+	//SetOptions(options ...interface{})
 
 	// 发送消息
 	Send(msg interface{}) error
@@ -79,21 +69,28 @@ type session struct {
 	mtx             sync.Mutex
 	state           int32
 	conn            net.Conn
-	codecs          Codecs               // 编解码器
-	sendTimeout     time.Duration        // 发送超时
-	receiveTimeout  time.Duration        // 接收超时
-	sendBuffSize    int                  // 发送缓冲区大小
-	receiveBuffSize int                  // 接收缓冲区大小
-	maxMsgSize      int                  // 最大消息大小
-	sendChan        chan Message         // 发送channel
-	evtCB           SessionEventCallback // 事件回调
+	codecs          Codecs           // 编解码器
+	sendTimeout     time.Duration    // 发送超时
+	receiveTimeout  time.Duration    // 接收超时
+	sendBuffSize    int              // 发送缓冲区大小
+	receiveBuffSize int              // 接收缓冲区大小
+	maxMsgSize      int              // 最大消息大小
+	sendQueueSize   int              // 发送队列大小
+	sendQueue       *queue.ChanQueue // 发送队列
+	evtCB           EventCallback    // 事件回调
 }
 
 func newSession(impl sessionImpl, conn net.Conn) session {
-	return session{impl: impl, conn: conn, sendBuffSize: defaultSendBuffSize, receiveBuffSize: defaultReceiveBuffSize}
+	return session{
+		impl:            impl,
+		conn:            conn,
+		sendBuffSize:    DefaultSendBuffSize,
+		receiveBuffSize: DefaultReceiveBuffSize,
+		sendQueueSize:   DefaultSendQueueSize,
+	}
 }
 
-func (s *session) Start(evtCB SessionEventCallback) error {
+func (s *session) Start(evtCB EventCallback) error {
 	if evtCB == nil {
 		return ErrNilEventCallback
 	}
@@ -113,9 +110,7 @@ func (s *session) Start(evtCB SessionEventCallback) error {
 		return ErrSessionClosed
 	}
 
-	if s.sendChan == nil {
-		s.sendChan = make(chan Message, defaultSendChanSize)
-	}
+	s.sendQueue = queue.NewChanQueue(s.sendQueueSize)
 
 	s.evtCB = evtCB
 	s.state |= sessionStarted
@@ -138,7 +133,11 @@ func (s *session) Close() error {
 		return ErrSessionClosed
 	}
 
-	s.close()
+	s.state |= sessionClosed
+	s.conn.Close()
+	s.conn = nil
+	s.sendQueue.Destroy()
+	s.sendQueue = nil
 
 	return nil
 }
@@ -246,9 +245,9 @@ func (s *session) SetMaxMessage(size int) error {
 	return nil
 }
 
-func (s *session) SetSendChan(size int) error {
+func (s *session) SetSendQueue(size int) error {
 	if size <= 0 {
-		return ErrSendChanSize
+		return ErrSendQueueSize
 	}
 
 	s.mtx.Lock()
@@ -261,13 +260,13 @@ func (s *session) SetSendChan(size int) error {
 		return ErrSessionClosed
 	}
 
-	s.sendChan = make(chan Message, size)
+	s.sendQueueSize = size
 	return nil
 }
 
 func (s *session) Send(msg interface{}) error {
 	if msg == nil {
-		return ErrNilMsg
+		return ErrNilMessage
 	}
 
 	s.mtx.Lock()
@@ -281,13 +280,13 @@ func (s *session) Send(msg interface{}) error {
 	}
 	s.mtx.Unlock()
 
-	if packet, err := s.codecs.Encode(msg); err != nil {
+	if msgCoded, err := s.codecs.Encode(msg); err != nil {
 		return err
 	} else {
-		if packet.Length() > s.maxMsgSize {
+		if msgCoded.Length() > s.maxMsgSize {
 			return ErrMsgTooLarge
 		}
-		s.sendChan <- packet
+		s.sendQueue.Push(msgCoded)
 		return nil
 	}
 }
@@ -308,32 +307,6 @@ func (s *session) isClosed(lock bool) bool {
 	return s.state&sessionClosed > 0
 }
 
-func (s *session) close() {
-	s.state |= sessionClosed
-	s.conn.Close()
-	s.conn = nil
-	close(s.sendChan)
-	s.sendChan = nil
-}
-
-func (s *session) notifyEvent(evt SessionEvt) {
-	if evt == nil {
-		panic(errors.New("evt nil"))
-	}
-
+func (s *session) notifyEvent(evt Event) {
 	s.evtCB(s, evt)
-}
-
-func (s *session) tryClose(err error) {
-	s.mtx.Lock()
-	if s.isClosed(false) {
-		s.mtx.Unlock()
-		return
-	}
-	s.close()
-	s.mtx.Unlock()
-
-	if err != nil {
-		s.notifyEvent(newSessionCloseEvt(err))
-	}
 }

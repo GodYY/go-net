@@ -1,10 +1,4 @@
-package socket
-
-import "errors"
-
-var (
-	ErrUnknownNetwork = errors.New("unknown network")
-)
+package session
 
 // Listener is a generic listener for stream-oriented socket-session.
 type Listener interface {

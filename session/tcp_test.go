@@ -1,4 +1,4 @@
-package socket
+package session
 
 import (
 	"errors"
@@ -18,7 +18,7 @@ type tcpCodecs struct {
 func (c *tcpCodecs) Encode(o interface{}) (Message, error) {
 	switch msg := o.(type) {
 	case *stringMsg:
-		return NewPacket(msg.msg), nil
+		return NewMessage(msg.msg), nil
 
 	default:
 		return nil, errors.New("msg error")
@@ -55,22 +55,21 @@ func Test(t *testing.T) {
 			srvSession.SetCodecs(&tcpCodecs{})
 
 			// 启动session
-			srvSession.Start(func(s *session, evt SessionEvt) {
-				switch evt.Type() {
-				case SessionEvtSendErr:
-					e := evt.(*SessionSendErrEvt)
-					fmt.Printf("server send error, %s\n", e.Err)
-
-				case SessionEvtReceive:
-					e := evt.(*SessionReceiveEvt)
+			srvSession.Start(func(s *session, event Event) {
+				switch event.Type() {
+				case EventType_Message:
+					msg := event.Message().(*stringMsg)
 					atomic.AddInt32(&serverReceive, 1)
-					fmt.Printf("server receive msg len:%d\n", len(e.Msg.(*stringMsg).msg))
+					fmt.Printf("server receive msg len:%d\n", len(msg.msg))
 
-				case SessionEvtClose:
-					e := evt.(*SessionCloseEvt)
-					fmt.Printf("server close, %s\n", e.Err)
+				case EventType_Error:
+					fmt.Printf("server encounter error, %s\n", event.Error().Error())
+
+				case EventType_Close:
+					fmt.Printf("server close, reason: %s\n", event.Reason())
 				}
 			})
+
 			go func() {
 				sendMsgCount := sendMsgCount + 5
 				for i := int32(0); i < sendMsgCount; i++ {
@@ -99,22 +98,21 @@ func Test(t *testing.T) {
 	}
 	// 启动client
 	cliSession.SetCodecs(&tcpCodecs{})
-	cliSession.Start(func(s *session, evt SessionEvt) {
-		switch evt.Type() {
-		case SessionEvtSendErr:
-			e := evt.(*SessionSendErrEvt)
-			fmt.Printf("client send error, %s\n", e.Err)
+	cliSession.Start(func(s *session, e Event) {
+		switch e.Type() {
+		case EventType_Message:
+			msg := e.Message().(*stringMsg)
+			atomic.AddInt32(&serverReceive, 1)
+			fmt.Printf("client receive msg len:%d\n", len(msg.msg))
 
-		case SessionEvtReceive:
-			e := evt.(*SessionReceiveEvt)
-			atomic.AddInt32(&clientReceive, 1)
-			fmt.Printf("client receive msg len:%d\n", len(e.Msg.(*stringMsg).msg))
+		case EventType_Error:
+			fmt.Printf("client encounter error, %s\n", e.Error().Error())
 
-		case SessionEvtClose:
-			e := evt.(*SessionCloseEvt)
-			fmt.Printf("client close, %s\n", e.Err)
+		case EventType_Close:
+			fmt.Printf("client close, reason: %s\n", e.Reason())
 		}
 	})
+
 	go func() {
 		for i := int32(0); i < sendMsgCount; i++ {
 			cliSession.Send(&stringMsg{msg: make([]byte, 100)})
@@ -166,23 +164,22 @@ func TestMaxMsg(t *testing.T) {
 			srvSession.SetMaxMessage(maxMsgSize)
 
 			// 启动session
-			srvSession.Start(func(s *session, evt SessionEvt) {
-				switch evt.Type() {
-				case SessionEvtSendErr:
-					e := evt.(*SessionSendErrEvt)
-					fmt.Printf("server send error, %s\n", e.Err)
+			srvSession.Start(func(s *session, e Event) {
+				switch e.Type() {
+				case EventType_Error:
+					fmt.Printf("server encounter error, %s\n", e.Error().Error())
 
-				case SessionEvtReceive:
-					e := evt.(*SessionReceiveEvt)
+				case EventType_Message:
+					msg := e.Message().(*stringMsg)
 					atomic.AddInt32(&serverReceive, 1)
-					fmt.Printf("server receive msg len:%d\n", len(e.Msg.(*stringMsg).msg))
+					fmt.Printf("server receive msg len:%d\n", len(msg.msg))
 
-				case SessionEvtClose:
-					e := evt.(*SessionCloseEvt)
-					fmt.Printf("server close, %s\n", e.Err)
+				case EventType_Close:
+					fmt.Printf("server close, reason: %s\n", e.Reason())
 					atomic.StoreInt32(&srvClosed, 1)
 				}
 			})
+
 			go func() {
 				for i := int32(0); i < sendMsgCount; i++ {
 					srvSession.Send(&stringMsg{msg: make([]byte, 65536)})
@@ -211,20 +208,18 @@ func TestMaxMsg(t *testing.T) {
 	cliSession.SetSendBuffer(8192)
 	cliSession.SetReceiveBuffer(8192)
 	cliSession.SetMaxMessage(maxMsgSize)
-	cliSession.Start(func(s *session, evt SessionEvt) {
+	cliSession.Start(func(s *session, evt Event) {
 		switch evt.Type() {
-		case SessionEvtSendErr:
-			e := evt.(*SessionSendErrEvt)
-			fmt.Printf("client send error, %s\n", e.Err)
+		case EventType_Error:
+			fmt.Printf("client encounter error, %s\n", evt.Error().Error())
 
-		case SessionEvtReceive:
-			e := evt.(*SessionReceiveEvt)
+		case EventType_Message:
+			msg := evt.Message().(*stringMsg)
 			atomic.AddInt32(&clientReceive, 1)
-			fmt.Printf("client receive msg len:%d\n", len(e.Msg.(*stringMsg).msg))
+			fmt.Printf("client receive msg len:%d\n", len(msg.msg))
 
-		case SessionEvtClose:
-			e := evt.(*SessionCloseEvt)
-			fmt.Printf("client close, %s\n", e.Err)
+		case EventType_Close:
+			fmt.Printf("client close, reason: %s\n", evt.Reason())
 			atomic.StoreInt32(&cliClosed, 1)
 		}
 	})
